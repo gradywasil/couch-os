@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CouchEmu SDK Demo: Meteor Dodge</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #070b14;
+        color: #f8fafc;
+        font-family: system-ui, -apple-system, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" width="960" height="540"></canvas>
+    <script>
+      /*
+       * CouchEmu SDK sample.
+       *
+       * Input comes from two places, and this demo uses both:
+       *  1. navigator.getGamepads() — patched automatically when the game is
+       *     served from the same origin as the console.
+       *  2. The postMessage bridge (COUCH_EMU_INPUT) — works cross-origin.
+       */
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      const parentWin = window.parent !== window ? window.parent : null;
+
+      function toConsole(msg) {
+        if (parentWin) parentWin.postMessage(msg, '*');
+      }
+
+      // Ask every phone for the NES deck, and say hello so the console sends
+      // the roster right away.
+      toConsole({ type: 'COUCH_EMU_SET_LAYOUT', layout: 'nes' });
+      toConsole({ type: 'COUCH_EMU_HELLO' });
+
+      let roster = [];
+      const bridgeStates = [null, null, null, null];
+
+      window.addEventListener('message', (e) => {
+        // Only trust the console that embeds us.
+        if (!parentWin || e.source !== parentWin) return;
+        const data = e.data;
+        if (!data || typeof data !== 'object') return;
+        if (data.type === 'COUCH_EMU_PLAYERS' && Array.isArray(data.players)) {
+          roster = data.players;
+        } else if (
+          data.type === 'COUCH_EMU_INPUT' &&
+          Number.isInteger(data.slot) &&
+          data.slot >= 0 &&
+          data.slot < 4 &&
+          data.state
+        ) {
+          bridgeStates[data.slot] = data.state;
+        }
+      });
+
+      /** Unified per-slot input from Gamepad API or the bridge. */
+      function readInput(pads, i) {
+        const pad = pads && pads[i];
+        if (pad && pad.connected) {
+          const b = (n) => Boolean(pad.buttons[n] && pad.buttons[n].pressed);
+          return {
+            present: true,
+            ax: pad.axes[0] || 0,
+            ay: pad.axes[1] || 0,
+            up: b(12),
+            down: b(13),
+            left: b(14),
+            right: b(15),
+            a: b(0) || b(1),
+            start: b(9),
+          };
+        }
+        const st = bridgeStates[i];
+        if (st) {
+          const m = st.buttonsMask | 0;
+          const b = (n) => (m & (1 << n)) !== 0;
+          return {
+            present: true,
+            ax: (st.axes && st.axes[0]) || 0,
+            ay: (st.axes && st.axes[1]) || 0,
+            up: b(12),
+            down: b(13),
+            left: b(14),
+            right: b(15),
+            a: b(0) || b(1),
+            start: b(9),
+          };
+        }
+        return { present: false };
+      }
+
+      const COLORS = ['#38bdf8', '#fb7185', '#4ade80', '#facc15'];
+      const ships = Array.from({ length: 4 }, (_, i) => ({
+        x: 200 + i * 160,
+        y: H - 90,
+        color: COLORS[i],
+        alive: true,
+        score: 0,
+        scoreAcc: 0,
+      }));
+
+      let meteors = [];
+      let spawnAcc = 0;
+      let last = performance.now();
+
+      function spawnMeteor() {
+        meteors.push({
+          x: 40 + Math.random() * (W - 80),
+          y: -20,
+          vy: 170 + Math.random() * 190, // px/sec
+          r: 12 + Math.random() * 14,
+        });
+      }
+
+      function loop(now) {
+        // Frame-rate independent: identical speed on 60/120/144 Hz screens.
+        const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+        last = now;
+
+        spawnAcc += dt;
+        while (spawnAcc >= 0.3) {
+          spawnAcc -= 0.3;
+          spawnMeteor();
+        }
+
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const inputs = [0, 1, 2, 3].map((i) => readInput(pads, i));
+        const active = inputs.map(
+          (inp, i) => inp.present || roster.some((p) => p.slot === i) || i === 0,
+        );
+
+        for (let i = 0; i < 4; i++) {
+          if (!active[i]) continue;
+          const inp = inputs[i];
+          const ship = ships[i];
+          if (inp.present) {
+            let dx = Math.abs(inp.ax) > 0.15 ? inp.ax : 0;
+            let dy = Math.abs(inp.ay) > 0.15 ? inp.ay : 0;
+            if (inp.left) dx = -1;
+            if (inp.right) dx = 1;
+            if (inp.up) dy = -1;
+            if (inp.down) dy = 1;
+            const speed = 360 * (inp.a ? 1.8 : 1);
+            ship.x = Math.max(30, Math.min(W - 30, ship.x + dx * speed * dt));
+            ship.y = Math.max(60, Math.min(H - 30, ship.y + dy * speed * dt));
+            if (!ship.alive && (inp.a || inp.start)) {
+              ship.alive = true;
+              ship.score = 0;
+            }
+          }
+          if (ship.alive) {
+            ship.scoreAcc += dt;
+            while (ship.scoreAcc >= 0.25) {
+              ship.scoreAcc -= 0.25;
+              ship.score += 1;
+            }
+          }
+        }
+
+        meteors = meteors.filter((m) => {
+          m.y += m.vy * dt;
+          for (let i = 0; i < 4; i++) {
+            if (!active[i]) continue;
+            const ship = ships[i];
+            if (ship.alive && Math.hypot(m.x - ship.x, m.y - ship.y) < m.r + 16) {
+              ship.alive = false;
+              toConsole({
+                type: 'COUCH_EMU_RUMBLE',
+                slot: i,
+                durationMs: 220,
+                intensity: 1,
+              });
+            }
+          }
+          return m.y < H + 40;
+        });
+
+        ctx.fillStyle = '#070b14';
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 14px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText(
+          'SDK SAMPLE GAME · METEOR DODGE (Hold A/B to boost · A or Start to respawn)',
+          24,
+          30,
+        );
+
+        ctx.fillStyle = '#f97316';
+        for (const m of meteors) {
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        for (let i = 0; i < 4; i++) {
+          if (!active[i]) continue;
+          const ship = ships[i];
+          const player = roster.find((p) => p.slot === i);
+          ctx.save();
+          ctx.globalAlpha = ship.alive ? 1 : 0.25;
+          ctx.fillStyle = (player && player.color) || ship.color;
+          ctx.beginPath();
+          ctx.moveTo(ship.x, ship.y - 18);
+          ctx.lineTo(ship.x - 15, ship.y + 14);
+          ctx.lineTo(ship.x + 15, ship.y + 14);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+
+          ctx.fillStyle = '#e2e8f0';
+          ctx.font = '12px monospace';
+          ctx.textAlign = 'center';
+          const label = player ? String(player.name).slice(0, 12) : `P${i + 1}`;
+          ctx.fillText(`${label}:${ship.score}`, ship.x, ship.y + 30);
+        }
+
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>

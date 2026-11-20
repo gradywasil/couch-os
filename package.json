@@ -1,0 +1,28 @@
+{
+  "name": "couch-emu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n SERVER,CLIENT -c cyan,magenta \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
+    "build": "npm run build:shared && npm run build --workspace=server && npm run build --workspace=client",
+    "start": "npm run start --workspace=server",
+    "play": "npm run build && NODE_ENV=production npm start",
+    "typecheck": "npm run typecheck --workspace=shared && npm run typecheck --workspace=server && npm run typecheck --workspace=client",
+    "test": "npm run test --workspace=server",
+    "build:shared": "npm run build --workspace=shared",
+    "predev": "npm run build:shared",
+    "pretypecheck": "npm run build:shared",
+    "pretest": "npm run build:shared",
+    "prestart": "npm run build:shared"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.2"
+  }
+}

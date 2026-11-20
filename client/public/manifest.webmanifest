@@ -1,0 +1,13 @@
+{
+  "name": "COUCH·OS",
+  "short_name": "COUCH·OS",
+  "description": "Living-room arcade console with phones as wireless controllers.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#07060B",
+  "theme_color": "#07060B",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
